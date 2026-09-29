@@ -17,22 +17,30 @@ export const fromAuthProvider = () =>
   Layer.effect(
     Credentials,
     Effect.gen(function* () {
-      const { profileName, resolve } = yield* resolveProviderConfig<
+      // Defer profile lookup and credential resolution until first use, so
+      // building the provider layers never requires a configured profile.
+      const resolve = resolveProviderConfig<
         NeonAuthConfig,
         NeonResolvedCredentials
-      >(NEON_AUTH_PROVIDER_NAME);
-
-      return yield* resolve.pipe(
-        Effect.map((creds) => ({
-          apiKey: creds.apiKey,
-          apiBaseUrl: DEFAULT_BASE_URL,
-        })),
-        Effect.mapError(
-          (e) =>
-            new ConfigError({
-              message: `Failed to resolve Neon credentials from ${profileName === undefined ? "the CI environment" : `profile '${profileName}'`}: ${(e as { message?: string }).message ?? String(e)}`,
-            }),
+      >(NEON_AUTH_PROVIDER_NAME).pipe(
+        Effect.flatMap(({ profileName, resolve }) =>
+          resolve.pipe(
+            Effect.map((creds) => ({
+              apiKey: creds.apiKey,
+              apiBaseUrl: DEFAULT_BASE_URL,
+            })),
+            Effect.mapError(
+              (e) =>
+                new ConfigError({
+                  message: `Failed to resolve Neon credentials from ${profileName === undefined ? "the CI environment" : `profile '${profileName}'`}: ${(e as { message?: string }).message ?? String(e)}`,
+                }),
+            ),
+          ),
         ),
+      );
+      const context = yield* Effect.context<Effect.Services<typeof resolve>>();
+      return yield* resolve.pipe(
+        Effect.provideContext(context),
         Effect.orDie,
         Effect.cached,
       );
